@@ -9,3 +9,5 @@ libraryDependencies ++= Seq(
   "ch.acra" % "acra" % "4.5.0",
   "com.android.support" % "support-v4" % "20.0.0"
 )
+
+proguardCache in Android += ProguardCache("macroid") % "org.macroid"
