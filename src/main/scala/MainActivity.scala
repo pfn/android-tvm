@@ -22,6 +22,9 @@ object MainActivity {
   case object DecimalField extends FieldType
   case object DollarField  extends FieldType
 
+  case class AmortRowData(n: Int, ipaid: Double, pvpaid: Double,
+                          pvremain: Double, iTotal: Double, equity: Double)
+
   case class AmortRow(n: TextView, ipaid: TextView, pvpaid: TextView,
                       pvremain: TextView, iTotal: TextView, equity: TextView)
   def tweak[A <: View,B](f: A => B) = Tweak[A](f(_))
@@ -34,9 +37,28 @@ object MainActivity {
     classOf[java.lang.Byte]      -> java.lang.Byte.TYPE
   )
 
+  val prefs = Application.context.getSharedPreferences(
+    "userinput", Context.MODE_PRIVATE)
+
   case class TVMValues(pv: Option[BigDecimal], fv: Option[BigDecimal],
                        i: Option[BigDecimal], a: Option[BigDecimal],
-                       n: Option[Int], nyr: Int)
+                       n: Option[Int], nyr: Int) {
+    val editor = prefs.edit()
+    setPref(pv, "pv")
+    setPref(fv, "fv")
+    setPref(i, "i")
+    setPref(a, "a")
+    setPref(n, "n")
+    editor.putString("nyr", nyr.toString)
+    editor.apply()
+
+    private def setPref[A](value: Option[A], key: String) {
+
+      value foreach { v =>
+        editor.putString(key, v.toString)
+      }
+    }
+  }
 
   abstract class LpRelation[V <: ViewGroup, LP <: ViewGroup.LayoutParams : ClassTag] {
     def lpType = implicitly[ClassTag[LP]].runtimeClass
@@ -68,7 +90,21 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
       BigDecimal(f.getText.toString)
     }
   }
-  def values() = {
+  def loadDefaults() {
+    def loadPref[A <: TextView](view: Option[A], key: String, default: String) {
+      view foreach { v =>
+        v.setText(prefs.getString(key, default))
+      }
+    }
+
+    loadPref(pvField, "pv", "")
+    loadPref(fvField, "fv", "0")
+    loadPref(iField, "i", "4.500")
+    loadPref(aField, "a", "")
+    loadPref(nField, "n", "360")
+    loadPref(nyrField, "nyr", "12")
+  }
+  def values = {
     TVMValues(
       pvField  flatMap tvToBD,
       fvField  flatMap tvToBD,
@@ -285,12 +321,12 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
   )
 
   def createAmortRow = {
-    var n = slot[TextView]
-    var ipaid = slot[TextView]
-    var pvpaid = slot[TextView]
+    var n        = slot[TextView]
+    var ipaid    = slot[TextView]
+    var pvpaid   = slot[TextView]
     var pvremain = slot[TextView]
-    var itotal = slot[TextView]
-    var equity = slot[TextView]
+    var itotal   = slot[TextView]
+    var equity   = slot[TextView]
 
     val amortRowLayout = l[LinearLayout](
       w[TextView] <~ text("#") <~ wire(n) <~
@@ -396,6 +432,12 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
   lazy val pagerLayout = w[HSViewPager] <~ tweak { v: ViewPager =>
     v.setFitsSystemWindows(true)
     v.setAdapter(Adapter)
+    v.setOnPageChangeListener(new ViewPager.SimpleOnPageChangeListener {
+      override def onPageSelected(pos: Int) {
+        if (pos == 1)
+          calculateAmortization()
+      }
+    })
   }
 
   lazy val layout = l[ScrollView](
@@ -458,7 +500,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
    * P = (A * (1 - (1 + i)**(-n)) / i)
    */
   def calculatePV() = {
-    values() match {
+    values match {
       case TVMValues(_,Some(fv),Some(i),Some(a),Some(n),nyr) =>
         val pi = periodRate(i, nyr)
 
@@ -472,7 +514,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
   }
 
   def calculateFV() = {
-    values() match {
+    values match {
       case TVMValues(Some(pv),_,Some(i),Some(a),Some(n),nyr) =>
         toast("Not implemented") <~ fry
       case _ =>
@@ -537,7 +579,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
         }
       } else -1
     }
-    values() match {
+    values match {
       case TVMValues(Some(pv),Some(fv),_,Some(a),Some(n),nyr) =>
         val range = Range.Double(ESTIMATE_START, ESTIMATE_END, ESTIMATE_INCR)
 
@@ -569,7 +611,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
    * </pre>
    */
   def calculateA() = {
-    values() match {
+    values match {
       case TVMValues(Some(pv),Some(fv),Some(i),_,Some(n),nyr) =>
         val pi = periodRate(i, nyr)
         val r = (pv * pi) / (1 -  1 / (1 + pi).pow(n))
@@ -586,7 +628,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
    */
   def calculateN() = {
     import math._
-    values() match {
+    values match {
       case TVMValues(Some(pv),Some(fv),Some(i),Some(a),_,nyr) =>
         val pi = periodRate(i, nyr)
         val r = -1 * (log((1 - (pv * pi / a)).doubleValue()) /
@@ -597,15 +639,47 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
     }
   }
 
+  @tailrec
+  private def _calculateAmortization(n: Int, rate: Double,
+                                     remaining: Double, a: Double,
+                                     itotal: Double, ptotal: Double,
+                                     acc: List[AmortRowData] = Nil):
+                                     List[AmortRowData] = {
+    if (remaining > 0) {
+      val ipaid = remaining * rate
+      val ppaid = a - ipaid
+      _calculateAmortization(
+        n + 1, rate, remaining - ppaid, a, itotal + ipaid, ptotal + ppaid,
+        AmortRowData(n, ipaid, ppaid, remaining, itotal, ptotal) :: acc)
+    } else {
+      acc
+    }
+  }
+
+  def calculateAmortization() = {
+    values match {
+      case TVMValues(Some(pv),_,Some(i),Some(a),_,nyr) =>
+        val rate = periodRate(i, nyr).doubleValue()
+        val rows = _calculateAmortization(
+          1, rate, pv.doubleValue(), a.doubleValue(), 0, 0)
+        AmortAdapter.data = rows
+        AmortAdapter.notifyDataSetChanged()
+      case _ =>
+        toast("Cannot amortize without principal, interest and payment") <~ fry
+ 
+    }
+  }
+
   object AmortAdapter extends BaseAdapter {
-    override def getCount = 100
+    var data = Seq.empty[AmortRowData]
+    override def getCount = data.length
 
     override def getItemId(p1: Int) = p1
 
     override def getView(pos: Int, convert: View, container: ViewGroup) = {
       val view = if (convert == null) createAmortRow else convert
       val holder = view.getTag.asInstanceOf[AmortRow]
-      holder.n.setText(pos.toString)
+      holder.n.setText(data(pos).n.toString)
       view
     }
 
@@ -620,7 +694,9 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
     override def instantiateItem(container: ViewGroup, position: Int) = {
       val v = position match {
         case 0 =>
-          getUi(layout)
+          val v = getUi(layout)
+          loadDefaults()
+          v
         case 1 =>
           getUi(amortLayout)
       }
