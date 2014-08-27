@@ -8,7 +8,9 @@ import android.os.Bundle
 import android.support.v4.view.{ViewPager, PagerAdapter}
 import android.text.TextUtils.TruncateAt
 import android.text._
+import android.view.View.OnTouchListener
 import android.view._
+import android.widget.AbsListView.OnScrollListener
 import android.widget._
 import macroid._
 import macroid.FullDsl._
@@ -25,7 +27,7 @@ object MainActivity {
   case class AmortRowData(n: Int, ipaid: Double, pvpaid: Double,
                           pvremain: Double, iTotal: Double, equity: Double)
 
-  case class AmortRow(n: TextView, ipaid: TextView, pvpaid: TextView,
+  case class AmortRow(ipaid: TextView, pvpaid: TextView,
                       pvremain: TextView, iTotal: TextView, equity: TextView)
   def tweak[A <: View,B](f: A => B) = Tweak[A](f(_))
   private lazy val primitiveMap: Map[Class[_],Class[_]] = Map(
@@ -46,14 +48,13 @@ object MainActivity {
     val editor = prefs.edit()
     setPref(pv, "pv")
     setPref(fv, "fv")
-    setPref(i, "i")
-    setPref(a, "a")
-    setPref(n, "n")
+    setPref(i,  "i")
+    setPref(a,  "a")
+    setPref(n,  "n")
     editor.putString("nyr", nyr.toString)
     editor.apply()
 
     private def setPref[A](value: Option[A], key: String) {
-
       value foreach { v =>
         editor.putString(key, v.toString)
       }
@@ -97,11 +98,11 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
       }
     }
 
-    loadPref(pvField, "pv", "")
-    loadPref(fvField, "fv", "0")
-    loadPref(iField, "i", "4.500")
-    loadPref(aField, "a", "")
-    loadPref(nField, "n", "360")
+    loadPref(pvField,  "pv",  "")
+    loadPref(fvField,  "fv",  "0")
+    loadPref(iField,   "i",   "4.500")
+    loadPref(aField,   "a",   "")
+    loadPref(nField,   "n",   "360")
     loadPref(nyrField, "nyr", "12")
   }
   def values = {
@@ -274,13 +275,16 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
   }
 
   lazy val headerPadding = padding(all = 4 dp)
-  lazy val headerTransform = Transformer {
-    case tv: TextView =>
-      tv.setGravity(Gravity.CENTER)
-      tv.setEllipsize(TruncateAt.END)
-      tv.setSingleLine(true)
-      tv <~ padding(all = 4 dp)
+  lazy val headerTweak = tweak { tv: TextView =>
+    tv.setGravity(Gravity.CENTER)
+    tv.setEllipsize(TruncateAt.END)
+    tv.setSingleLine(true)
+    tv.setPadding(4 dp, 4 dp, 4 dp, 4 dp)
   }
+  lazy val headerTransform = Transformer {
+    case tv: TextView => tv <~ headerTweak
+  }
+
   lazy val rowTransform = Transformer {
     case tv: TextView =>
       tv.setGravity(Gravity.RIGHT)
@@ -293,35 +297,51 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
       tv.setSingleLine(true)
       tv <~ padding(all = 4 dp)
   }
-  lazy val amortLayout = l[HorizontalScrollView](
+
+  lazy val scrollSync = new ListViewScrollSync
+  lazy val amortLayout = l[LinearLayout](
     l[LinearLayout](
+      w[TextView] <~ text("#") <~
+        lp[LinearLayout](48 dp, WRAP_CONTENT) <~ bg(Color.LTGRAY),
+      w[ListView] <~ lp[LinearLayout](48 dp, MATCH_PARENT) <~
+        tweak { lv: ListView =>
+          lv.setAdapter(AmortNAdapter)
+          lv.setVerticalScrollBarEnabled(false)
+          scrollSync.add(lv)
+        }
+    ) <~ vertical,
+    l[HorizontalScrollView](
       l[LinearLayout](
-        w[TextView] <~ text("#") <~
-          lp[LinearLayout](48 dp, WRAP_CONTENT),
-        w[TextView] <~ text("Interest Paid") <~
-          lp[LinearLayout](96 dp, WRAP_CONTENT),
-        w[TextView] <~ text("Principal Paid") <~
-          lp[LinearLayout](96 dp, WRAP_CONTENT),
-        w[TextView] <~ text("Principal Remaining") <~
-          lp[LinearLayout](120 dp, WRAP_CONTENT),
-        w[TextView] <~ text("Total Interest") <~
-          lp[LinearLayout](120 dp, WRAP_CONTENT),
-        w[TextView] <~ text("Equity") <~
-          lp[LinearLayout](120 dp, WRAP_CONTENT)
-      ) <~ horizontal <~ tweak { ll: LinearLayout =>
-        ll.setShowDividers(LinearLayout.SHOW_DIVIDER_MIDDLE)
-        ll.setDividerDrawable(getResources.getDrawable(R.drawable.vertical_divider))
-        ll.setBackgroundColor(Color.LTGRAY)
-        ll.setDividerPadding(0)
-      } <~ lp[LinearLayout](MATCH_PARENT, WRAP_CONTENT) <~ headerTransform,
-      w[ListView] <~ lp[LinearLayout](MATCH_PARENT, 0, 1) <~ tweak { lv: ListView =>
-        lv.setAdapter(AmortAdapter)
-      }
-    ) <~ vertical <~ lp[HorizontalScrollView](MATCH_PARENT, MATCH_PARENT)
-  )
+        l[LinearLayout](
+          w[TextView] <~ text("Interest Paid") <~
+            lp[LinearLayout](96 dp, WRAP_CONTENT),
+          w[TextView] <~ text("Principal Paid") <~
+            lp[LinearLayout](96 dp, WRAP_CONTENT),
+          w[TextView] <~ text("Principal Remaining") <~
+            lp[LinearLayout](120 dp, WRAP_CONTENT),
+          w[TextView] <~ text("Total Interest") <~
+            lp[LinearLayout](120 dp, WRAP_CONTENT),
+          w[TextView] <~ text("Equity") <~
+            lp[LinearLayout](120 dp, WRAP_CONTENT)
+        ) <~ horizontal <~ tweak { ll: LinearLayout =>
+          ll.setShowDividers(LinearLayout.SHOW_DIVIDER_MIDDLE)
+          ll.setDividerDrawable(getResources.getDrawable(R.drawable.vertical_divider))
+          ll.setBackgroundColor(Color.LTGRAY)
+          ll.setDividerPadding(0)
+        } <~ lp[LinearLayout](MATCH_PARENT, WRAP_CONTENT),
+        w[ListView] <~ lp[LinearLayout](MATCH_PARENT, 0, 1) <~ tweak { lv: ListView =>
+          lv.setAdapter(AmortAdapter)
+          scrollSync.add(lv)
+        }
+      ) <~ vertical <~ lp[HorizontalScrollView](MATCH_PARENT, MATCH_PARENT)
+    ) <~ lp[LinearLayout](0, MATCH_PARENT, 1)
+  ) <~ horizontal <~ headerTransform <~ tweak { ll: LinearLayout =>
+    ll.setShowDividers(LinearLayout.SHOW_DIVIDER_MIDDLE)
+    ll.setDividerDrawable(getResources.getDrawable(R.drawable.vertical_divider))
+    ll.setDividerPadding(0)
+  }
 
   def createAmortRow = {
-    var n        = slot[TextView]
     var ipaid    = slot[TextView]
     var pvpaid   = slot[TextView]
     var pvremain = slot[TextView]
@@ -329,8 +349,6 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
     var equity   = slot[TextView]
 
     val amortRowLayout = l[LinearLayout](
-      w[TextView] <~ text("#") <~ wire(n) <~
-        lp[LinearLayout](48 dp, WRAP_CONTENT),
       w[TextView] <~ text("Interest Paid") <~ wire(ipaid) <~
         lp[LinearLayout](96 dp, WRAP_CONTENT),
       w[TextView] <~ text("Principal Paid") <~ wire(pvpaid) <~
@@ -349,13 +367,12 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
 
     val view = getUi(amortRowLayout)
     val holder = for {
-      _n        <- n
       _ipaid    <- ipaid
       _pvpaid   <- pvpaid
       _pvremain <- pvremain
       _itotal   <- itotal
       _equity   <- equity
-    } yield AmortRow(_n, _ipaid, _pvpaid, _pvremain, _itotal, _equity)
+    } yield AmortRow(_ipaid, _pvpaid, _pvremain, _itotal, _equity)
 
     view.setTag(holder.get)
     view
@@ -647,10 +664,10 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
                                      List[AmortRowData] = {
     if (remaining > 0) {
       val ipaid = remaining * rate
-      val ppaid = a - ipaid
+      val ppaid = math.min(a - ipaid, remaining)
       _calculateAmortization(
         n + 1, rate, remaining - ppaid, a, itotal + ipaid, ptotal + ppaid,
-        AmortRowData(n, ipaid, ppaid, remaining, itotal, ptotal) :: acc)
+        AmortRowData(n, ipaid, ppaid, remaining - ppaid, itotal, ptotal) :: acc)
     } else {
       acc
     }
@@ -661,13 +678,33 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
       case TVMValues(Some(pv),_,Some(i),Some(a),_,nyr) =>
         val rate = periodRate(i, nyr).doubleValue()
         val rows = _calculateAmortization(
-          1, rate, pv.doubleValue(), a.doubleValue(), 0, 0)
+          1, rate, pv.doubleValue(), a.doubleValue(), 0, 0).reverse
         AmortAdapter.data = rows
         AmortAdapter.notifyDataSetChanged()
+        AmortNAdapter.data = rows
+        AmortNAdapter.notifyDataSetChanged()
       case _ =>
         toast("Cannot amortize without principal, interest and payment") <~ fry
- 
     }
+  }
+
+  object AmortNAdapter extends BaseAdapter {
+    var data = Seq.empty[AmortRowData]
+
+    override def getCount = data.length
+
+    override def getItemId(p1: Int) = p1
+
+    override def getView(pos: Int, convert: View, p3: ViewGroup) = {
+      if (convert != null) {
+        convert.asInstanceOf[TextView].setText(data(pos).n.toString)
+        convert
+      } else
+        getUi(w[TextView] <~ text(data(pos).n.toString) <~ headerTweak <~
+          tweak { tv: TextView => tv.setGravity(Gravity.RIGHT) } )
+    }
+
+    override def getItem(pos: Int) = data(pos)
   }
 
   object AmortAdapter extends BaseAdapter {
@@ -679,11 +716,16 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
     override def getView(pos: Int, convert: View, container: ViewGroup) = {
       val view = if (convert == null) createAmortRow else convert
       val holder = view.getTag.asInstanceOf[AmortRow]
-      holder.n.setText(data(pos).n.toString)
+      val d = data(pos)
+      holder.ipaid.setText("$%.2f" format d.ipaid)
+      holder.equity.setText("$%.2f" format d.equity)
+      holder.iTotal.setText("$%.2f" format d.iTotal)
+      holder.pvremain.setText("$%.2f" format d.pvremain)
+      holder.pvpaid.setText("$%.2f" format d.pvpaid)
       view
     }
 
-    override def getItem(p1: Int) = ???
+    override def getItem(pos: Int) = data(pos)
   }
 
   object Adapter extends PagerAdapter {
@@ -742,4 +784,43 @@ class HSViewPager(c: Context) extends ViewPager(c) with AutoLogTag {
       case h: HorizontalScrollView => dx < 0 || h.getScrollX > 0
       case _ => super.canScroll(v, checkV, dx, x, y)
     }
+}
+
+class ListViewScrollSync {
+  var lists = Set.empty[ListView]
+  var touchSource: View = _
+  var clickSource: View = _
+
+  def add(l: ListView): Unit = {
+    lists += l
+
+    l.setOnTouchListener(new OnTouchListener() {
+      override def onTouch(v: View, event: MotionEvent) = {
+        if (touchSource == null)
+          touchSource = v
+
+        if (v == touchSource) {
+          (lists - v.asInstanceOf[ListView]) foreach {
+            _.dispatchTouchEvent(event)
+          }
+
+          if (event.getAction == MotionEvent.ACTION_UP) {
+            clickSource = v
+            touchSource = null
+          }
+        }
+
+        false
+      }
+    })
+    l.setOnScrollListener(new OnScrollListener() {
+      override def onScroll(view: AbsListView, first: Int, visCount: Int, totalCount: Int) {
+        if(view == clickSource)
+          (lists - view.asInstanceOf[ListView]) foreach {
+            _.setSelectionFromTop(first, view.getChildAt(0).getTop)
+          }
+      }
+      override def onScrollStateChanged(p1: AbsListView, p2: Int) = ()
+    })
+  }
 }
