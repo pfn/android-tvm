@@ -667,7 +667,8 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
       val ppaid = math.min(a - ipaid, remaining)
       _calculateAmortization(
         n + 1, rate, remaining - ppaid, a, itotal + ipaid, ptotal + ppaid,
-        AmortRowData(n, ipaid, ppaid, remaining - ppaid, itotal, ptotal) :: acc)
+        AmortRowData(n, ipaid, ppaid, remaining - ppaid, itotal + ipaid,
+          ptotal + ppaid) :: acc)
     } else {
       acc
     }
