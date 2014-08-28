@@ -678,8 +678,8 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
     values match {
       case TVMValues(Some(pv),_,Some(i),Some(a),_,nyr) =>
         val rate = periodRate(i, nyr).doubleValue()
-        val rows = _calculateAmortization(
-          1, rate, pv.doubleValue(), a.doubleValue(), 0, 0).reverse
+        val rows = Vector(_calculateAmortization(
+          1, rate, pv.doubleValue(), a.doubleValue(), 0, 0).reverse: _*)
         AmortAdapter.data = rows
         AmortAdapter.notifyDataSetChanged()
         AmortNAdapter.data = rows
