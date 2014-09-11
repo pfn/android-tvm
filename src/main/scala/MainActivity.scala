@@ -81,7 +81,7 @@ object MainActivity {
       v.setLayoutParams(lp)
   }
 }
-class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
+class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with IdGeneration {
   import MainActivity._
   import ViewGroup.LayoutParams._
 
@@ -122,6 +122,8 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
   private var inputText     = slot[EditText]
   private var decimalButton = slot[Button]
   private var selectedField = Option.empty[TextView]
+  private var viewPager = slot[ViewPager]
+  private var amortPageButton = slot[InputImageButton]
 
   private var pvField  = slot[TextView]
   private var fvField  = slot[TextView]
@@ -329,10 +331,15 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
           ll.setBackgroundColor(Color.LTGRAY)
           ll.setDividerPadding(0)
         } <~ lp[LinearLayout](MATCH_PARENT, WRAP_CONTENT),
-        w[ListView] <~ lp[LinearLayout](MATCH_PARENT, 0, 1) <~ tweak { lv: ListView =>
-          lv.setAdapter(AmortAdapter)
-          scrollSync.add(lv)
-        }
+        w[ListView] <~ lp[LinearLayout](MATCH_PARENT, 0, 1) <~
+          tweak { lv: ListView =>
+            lv.setAdapter(AmortAdapter)
+            lv.setEmptyView(getUi(w[TextView] <~
+              lp[LinearLayout](MATCH_PARENT, MATCH_PARENT) <~
+              text("No data has been calculated")
+            ))
+            scrollSync.add(lv)
+          }
       ) <~ vertical <~ lp[HorizontalScrollView](MATCH_PARENT, MATCH_PARENT)
     ) <~ lp[LinearLayout](0, MATCH_PARENT, 1)
   ) <~ horizontal <~ headerTransform <~ tweak { ll: LinearLayout =>
@@ -449,13 +456,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
   lazy val pagerLayout = w[HSViewPager] <~ tweak { v: ViewPager =>
     v.setFitsSystemWindows(true)
     v.setAdapter(Adapter)
-    v.setOnPageChangeListener(new ViewPager.SimpleOnPageChangeListener {
-      override def onPageSelected(pos: Int) {
-        if (pos == 1)
-          calculateAmortization()
-      }
-    })
-  }
+  } <~ wire(viewPager)
 
   lazy val layout = l[ScrollView](
     l[LinearLayout](
@@ -501,7 +502,15 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
       ),
       w[TextView] <~ labelTweaks <~ text("N/year"),
       w[EditText] <~ wrapContent <~ smallNumberInputTweaks <~ text("12") <~
-        hold(IntegerField) <~ wire(nyrField)
+        hold(IntegerField) <~ wire(nyrField),
+      w[InputImageButton] <~ image(android.R.drawable.ic_media_next) <~
+        lp2(WRAP_CONTENT, WRAP_CONTENT) { ll: LinearLayout.LayoutParams =>
+          ll.gravity = Gravity.RIGHT
+          ll.topMargin = 24 dp
+        } <~ hide <~ wire(amortPageButton) <~ On.click {
+          viewPager.get.setCurrentItem(1)
+          Ui(true)
+        }
     ) <~ vertical <~ padding(all = 12 dp)
   ) <~ tweak { v: View => v.setFitsSystemWindows(true) }
 
@@ -523,6 +532,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
 
         val r = a * (1 - (1 / (1 + pi).pow(n))) / pi
 
+        calculateAmortization()
         pvField <~ text(
           r.setScale(2, BigDecimal.RoundingMode.HALF_UP).toString())
       case _ =>
@@ -611,6 +621,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
         }.dropWhile(_ == 0).headOption
 
         result map { r =>
+          calculateAmortization()
           iField <~ text("%.3f" format r)
         } getOrElse (
           toast("Unable to solve interest rate") <~ fry
@@ -632,6 +643,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
       case TVMValues(Some(pv),Some(fv),Some(i),_,Some(n),nyr) =>
         val pi = periodRate(i, nyr)
         val r = (pv * pi) / (1 -  1 / (1 + pi).pow(n))
+        calculateAmortization()
         aField <~ text(r.setScale(
           2, BigDecimal.RoundingMode.UP).toString())
       case _ =>
@@ -649,7 +661,8 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
       case TVMValues(Some(pv),Some(fv),Some(i),Some(a),_,nyr) =>
         val pi = periodRate(i, nyr)
         val r = -1 * (log((1 - (pv * pi / a)).doubleValue()) /
-        log((1 + pi).doubleValue()))
+          log((1 + pi).doubleValue()))
+        calculateAmortization()
         nField <~ text(ceil(r).toInt.toString)
       case _ =>
         toast("Cannot calculate number of payments with missing fields") <~ fry
@@ -684,6 +697,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
         AmortAdapter.notifyDataSetChanged()
         AmortNAdapter.data = rows
         AmortNAdapter.notifyDataSetChanged()
+        Adapter.calculatedAmortization()
       case _ =>
         toast("Cannot amortize without principal, interest and payment") <~ fry
     }
@@ -730,7 +744,15 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
   }
 
   object Adapter extends PagerAdapter {
-    override def getCount = 2
+    private var amortCalculated = false
+
+    def calculatedAmortization() {
+      amortCalculated = true
+      getUi(amortPageButton <~ show)
+      notifyDataSetChanged()
+    }
+
+    override def getCount = if (amortCalculated) 2 else 1
 
     override def isViewFromObject(p1: View, p2: scala.Any) = p1 == p2
 
@@ -749,6 +771,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag {
     }
   }
 }
+
 case class TextDrawable(text: String)(implicit c: AppContext) extends Drawable {
 
   val textPaint = new TextPaint
@@ -789,7 +812,7 @@ class HSViewPager(c: Context) extends ViewPager(c) with AutoLogTag {
 
 class ListViewScrollSync {
   var lists = Set.empty[ListView]
-  var touchSource: View = _
+  var touchSource = Map.empty[MotionEvent,View]
   var clickSource: View = _
 
   def add(l: ListView): Unit = {
@@ -797,18 +820,18 @@ class ListViewScrollSync {
 
     l.setOnTouchListener(new OnTouchListener() {
       override def onTouch(v: View, event: MotionEvent) = {
-        if (touchSource == null)
-          touchSource = v
+        if (touchSource.get(event).isEmpty)
+          touchSource += event -> v
 
-        if (v == touchSource) {
+        if (touchSource(event) == v) {
           (lists - v.asInstanceOf[ListView]) foreach {
             _.dispatchTouchEvent(event)
           }
 
           if (event.getAction == MotionEvent.ACTION_UP) {
             clickSource = v
-            touchSource = null
           }
+          touchSource -= event
         }
 
         false
@@ -816,7 +839,7 @@ class ListViewScrollSync {
     })
     l.setOnScrollListener(new OnScrollListener() {
       override def onScroll(view: AbsListView, first: Int, visCount: Int, totalCount: Int) {
-        if(view == clickSource)
+        if (view == clickSource)
           (lists - view.asInstanceOf[ListView]) foreach {
             _.setSelectionFromTop(first, view.getChildAt(0).getTop)
           }
