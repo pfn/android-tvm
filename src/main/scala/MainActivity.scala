@@ -110,7 +110,8 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
       pvField  flatMap tvToBD,
       fvField  flatMap tvToBD,
       iField   flatMap tvToBD,
-      aField   flatMap tvToBD,
+      aField   flatMap tvToBD map {
+        _.setScale(2, BigDecimal.RoundingMode.HALF_UP) },
       nField   map(f => f.getText.toString.toInt),
       nyrField map(f => f.getText.toString.toInt) getOrElse 12)
   }
@@ -527,12 +528,12 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
    */
   def calculatePV() = {
     values match {
-      case TVMValues(_,Some(fv),Some(i),Some(a),Some(n),nyr) =>
+      case data@TVMValues(_,Some(fv),Some(i),Some(a),Some(n),nyr) =>
         val pi = periodRate(i, nyr)
 
         val r = a * (1 - (1 / (1 + pi).pow(n))) / pi
 
-        calculateAmortization()
+        calculateAmortization(data.copy(pv = Some(r)))
         pvField <~ text(
           r.setScale(2, BigDecimal.RoundingMode.HALF_UP).toString())
       case _ =>
@@ -607,7 +608,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
       } else -1
     }
     values match {
-      case TVMValues(Some(pv),Some(fv),_,Some(a),Some(n),nyr) =>
+      case data@TVMValues(Some(pv),Some(fv),_,Some(a),Some(n),nyr) =>
         val range = Range.Double(ESTIMATE_START, ESTIMATE_END, ESTIMATE_INCR)
 
         val result = range.scanLeft(0.0) { (ac,b) =>
@@ -621,7 +622,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
         }.dropWhile(_ == 0).headOption
 
         result map { r =>
-          calculateAmortization()
+          calculateAmortization(data.copy(i = Some(r)))
           iField <~ text("%.3f" format r)
         } getOrElse (
           toast("Unable to solve interest rate") <~ fry
@@ -640,10 +641,10 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
    */
   def calculateA() = {
     values match {
-      case TVMValues(Some(pv),Some(fv),Some(i),_,Some(n),nyr) =>
+      case data@TVMValues(Some(pv),Some(fv),Some(i),_,Some(n),nyr) =>
         val pi = periodRate(i, nyr)
         val r = (pv * pi) / (1 -  1 / (1 + pi).pow(n))
-        calculateAmortization()
+        calculateAmortization(data.copy(a = Some(r)))
         aField <~ text(r.setScale(
           2, BigDecimal.RoundingMode.UP).toString())
       case _ =>
@@ -658,11 +659,11 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
   def calculateN() = {
     import math._
     values match {
-      case TVMValues(Some(pv),Some(fv),Some(i),Some(a),_,nyr) =>
+      case data@TVMValues(Some(pv),Some(fv),Some(i),Some(a),_,nyr) =>
         val pi = periodRate(i, nyr)
         val r = -1 * (log((1 - (pv * pi / a)).doubleValue()) /
           log((1 + pi).doubleValue()))
-        calculateAmortization()
+        calculateAmortization(data.copy(n = Some(ceil(r).toInt)))
         nField <~ text(ceil(r).toInt.toString)
       case _ =>
         toast("Cannot calculate number of payments with missing fields") <~ fry
@@ -687,20 +688,18 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
     }
   }
 
-  def calculateAmortization() = {
-    values match {
-      case TVMValues(Some(pv),_,Some(i),Some(a),_,nyr) =>
-        val rate = periodRate(i, nyr).doubleValue()
-        val rows = Vector(_calculateAmortization(
-          1, rate, pv.doubleValue(), a.doubleValue(), 0, 0).reverse: _*)
-        AmortAdapter.data = rows
-        AmortAdapter.notifyDataSetChanged()
-        AmortNAdapter.data = rows
-        AmortNAdapter.notifyDataSetChanged()
-        Adapter.calculatedAmortization()
-      case _ =>
-        toast("Cannot amortize without principal, interest and payment") <~ fry
-    }
+  def calculateAmortization(data: TVMValues) = data match {
+    case TVMValues(Some(pv),_,Some(i),Some(a),_,nyr) =>
+      val rate = periodRate(i, nyr).doubleValue()
+      val rows = Vector(_calculateAmortization(
+        1, rate, pv.doubleValue(), a.doubleValue(), 0, 0).reverse: _*)
+      AmortAdapter.data = rows
+      AmortAdapter.notifyDataSetChanged()
+      AmortNAdapter.data = rows
+      AmortNAdapter.notifyDataSetChanged()
+      Adapter.calculatedAmortization()
+    case _ => getUi(toast(
+      "Cannot amortize without principal, interest and payment") <~ fry)
   }
 
   object AmortNAdapter extends BaseAdapter {
