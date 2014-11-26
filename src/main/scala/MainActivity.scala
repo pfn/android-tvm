@@ -16,6 +16,8 @@ import macroid._
 import macroid.FullDsl._
 
 import scala.annotation.tailrec
+import scala.concurrent.Future
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.reflect.ClassTag
 import scala.util.Try
 
@@ -655,7 +657,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
     values match {
       case data@TVMValues(Some(pv),Some(fv),Some(i),Some(a),_,nyr) =>
         val pi = periodRate(i, nyr)
-        val r = if (i == BigDecimal(0)) (pv / a).doubleValue else
+        val r = if (i == BigDecimal(0)) (pv / a).doubleValue() else
           -1 * (log((1 - (pv * pi / a)).doubleValue()) /
             log((1 + pi).doubleValue()))
         calculateAmortization(data.copy(n = Some(ceil(r).toInt)))
@@ -685,14 +687,18 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
 
   def calculateAmortization(data: TVMValues) = data match {
     case TVMValues(Some(pv),_,Some(i),Some(a),_,nyr) =>
-      val rate = periodRate(i, nyr).doubleValue()
-      val rows = Vector(_calculateAmortization(
-        1, rate, pv.doubleValue(), a.doubleValue(), 0, 0).reverse: _*)
-      AmortAdapter.data = rows
-      AmortAdapter.notifyDataSetChanged()
-      AmortNAdapter.data = rows
-      AmortNAdapter.notifyDataSetChanged()
-      Adapter.calculatedAmortization()
+      Future {
+        val rate = periodRate(i, nyr).doubleValue()
+        val rows = Vector(_calculateAmortization(
+          1, rate, pv.doubleValue(), a.doubleValue(), 0, 0).reverse: _*)
+        AmortAdapter.data = rows
+        AmortAdapter.notifyDataSetChanged()
+        AmortNAdapter.data = rows
+        AmortNAdapter.notifyDataSetChanged()
+      } onSuccessUi {
+        case _ =>
+          Adapter.calculatedAmortization()
+      }
     case _ => getUi(toast(
       "Cannot amortize without principal, interest and payment") <~ fry)
   }
