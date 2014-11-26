@@ -17,6 +17,7 @@ import macroid.FullDsl._
 
 import scala.annotation.tailrec
 import scala.reflect.ClassTag
+import scala.util.Try
 
 object MainActivity {
   sealed trait FieldType
@@ -46,10 +47,10 @@ object MainActivity {
                        i: Option[BigDecimal], a: Option[BigDecimal],
                        n: Option[Int], nyr: Int) {
     val editor = prefs.edit()
-    setPref(pv, "pv")
-    setPref(fv, "fv")
-    setPref(i,  "i")
-    setPref(a,  "a")
+    setPref(pv map (_.setScale(2, BigDecimal.RoundingMode.HALF_UP)), "pv")
+    setPref(fv map (_.setScale(2, BigDecimal.RoundingMode.HALF_UP)), "fv")
+    setPref(i map  (_.setScale(3, BigDecimal.RoundingMode.HALF_UP)),  "i")
+    setPref(a map  (_.setScale(2, BigDecimal.RoundingMode.HALF_UP)),  "a")
     setPref(n,  "n")
     editor.putString("nyr", nyr.toString)
     editor.apply()
@@ -92,10 +93,8 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
     }
   }
   def loadDefaults() {
-    def loadPref[A <: TextView](view: Option[A], key: String, default: String) {
-      view foreach { v =>
-        v.setText(prefs.getString(key, default))
-      }
+    def loadPref[A <: TextView](view: A, key: String, default: String) {
+      view.setText(prefs.getString(key, default))
     }
 
     loadPref(pvField,  "pv",  "")
@@ -107,31 +106,30 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
   }
   def values = {
     TVMValues(
-      pvField  flatMap tvToBD,
-      fvField  flatMap tvToBD,
-      iField   flatMap tvToBD,
-      aField   flatMap tvToBD map {
-        _.setScale(2, BigDecimal.RoundingMode.HALF_UP) },
-      nField   map(f => f.getText.toString.toInt),
-      nyrField map(f => f.getText.toString.toInt) getOrElse 12)
+      tvToBD(pvField),
+      tvToBD(fvField),
+      tvToBD(iField),
+      tvToBD(aField),
+      Try(nField.getText.toString.toInt).toOption,
+      nyrField.getText.toString.toInt)
   }
 
   def periodRate(values: TVMValues) = values.i map { _ / 100 / values.nyr }
   def periodRate(i: BigDecimal, nyr: Int) = i / 100 / nyr
 
   private var popupWindow   = Option.empty[PopupWindow]
-  private var inputText     = slot[EditText]
-  private var decimalButton = slot[Button]
+  private var inputText: EditText = _
+  private var decimalButton: Button = _
   private var selectedField = Option.empty[TextView]
-  private var viewPager = slot[ViewPager]
-  private var amortPageButton = slot[InputImageButton]
+  private var viewPager: ViewPager = _
+  private var amortPageButton: View = _
 
-  private var pvField  = slot[TextView]
-  private var fvField  = slot[TextView]
-  private var iField   = slot[TextView]
-  private var aField   = slot[TextView]
-  private var nField   = slot[TextView]
-  private var nyrField = slot[TextView]
+  private var pvField: TextView = _
+  private var fvField: TextView = _
+  private var iField: TextView = _
+  private var aField: TextView = _
+  private var nField: TextView = _
+  private var nyrField: TextView = _
 
   val deleteLast = tweak { tv: EditText =>
     val sel = tv.getSelectionStart - tv.getSelectionEnd
@@ -139,7 +137,8 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
       tv.setText("")
     else tv.getText match {
       case e: Editable =>
-        e.delete(e.length - 1, e.length)
+        if (e.length > 0)
+          e.delete(e.length - 1, e.length)
         tv.setSelection(tv.getText.length, tv.getText.length)
     }
   }
@@ -350,11 +349,11 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
   }
 
   def createAmortRow = {
-    var ipaid    = slot[TextView]
-    var pvpaid   = slot[TextView]
-    var pvremain = slot[TextView]
-    var itotal   = slot[TextView]
-    var equity   = slot[TextView]
+    var ipaid: TextView    = null
+    var pvpaid: TextView   = null
+    var pvremain: TextView = null
+    var itotal: TextView   = null
+    var equity: TextView   = null
 
     val amortRowLayout = l[LinearLayout](
       w[TextView] <~ text("Interest Paid") <~ wire(ipaid) <~
@@ -374,15 +373,8 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
     } <~ amortRowTransform
 
     val view = getUi(amortRowLayout)
-    val holder = for {
-      _ipaid    <- ipaid
-      _pvpaid   <- pvpaid
-      _pvremain <- pvremain
-      _itotal   <- itotal
-      _equity   <- equity
-    } yield AmortRow(_ipaid, _pvpaid, _pvremain, _itotal, _equity)
 
-    view.setTag(holder.get)
+    view.setTag(AmortRow(ipaid, pvpaid, pvremain, itotal, equity))
     view
   }
 
@@ -428,14 +420,11 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
       w[Button] <~ text(".") <~ hold(".") <~
         wire(decimalButton),
       w[Button] <~ text("0") <~ hold(0),
-      w[ImageButton] <~ image(android.R.drawable.ic_menu_set_as) <~
+      w[ImageButton] <~ image(android.R.drawable.ic_menu_send) <~
         lp[TableRow](inputButtonSize, inputButtonSize) <~ On.click {
           Ui(popupWindow map { p =>
-            (for {
-              i <- inputText
-              s <- selectedField
-            } yield (i, s)) map { case (i, s) =>
-              val t = i.getText.toString
+            selectedField map { case (s) =>
+              val t = inputText.getText.toString
               if (t.length > 0) {
                 val text = s.getTag match {
                   case DecimalField => "%.3f" format t.toDouble
@@ -448,7 +437,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
             selectedField = None
             p.dismiss()
           })
-        }
+      }
     ) <~ lp[TableLayout](MATCH_PARENT, WRAP_CONTENT)
   ) <~ lp[FrameLayout](WRAP_CONTENT, WRAP_CONTENT) <~ Transformer {
     case b: Button => b <~ inputButtonTweaks
@@ -504,12 +493,12 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
       w[TextView] <~ labelTweaks <~ text("N/year"),
       w[EditText] <~ wrapContent <~ smallNumberInputTweaks <~ text("12") <~
         hold(IntegerField) <~ wire(nyrField),
-      w[InputImageButton] <~ image(android.R.drawable.ic_media_next) <~
+      w[ImageButton] <~ image(android.R.drawable.ic_media_next) <~
         lp2(WRAP_CONTENT, WRAP_CONTENT) { ll: LinearLayout.LayoutParams =>
           ll.gravity = Gravity.RIGHT
           ll.topMargin = 24 dp
         } <~ hide <~ wire(amortPageButton) <~ On.click {
-          viewPager.get.setCurrentItem(1)
+          viewPager.setCurrentItem(1)
           Ui(true)
         }
     ) <~ vertical <~ padding(all = 12 dp)
@@ -531,7 +520,8 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
       case data@TVMValues(_,Some(fv),Some(i),Some(a),Some(n),nyr) =>
         val pi = periodRate(i, nyr)
 
-        val r = a * (1 - (1 / (1 + pi).pow(n))) / pi
+        val r = if (i != BigDecimal(0)) a * (1 - (1 / (1 + pi).pow(n))) / pi
+          else a * n
 
         calculateAmortization(data.copy(pv = Some(r)))
         pvField <~ text(
@@ -643,7 +633,11 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
     values match {
       case data@TVMValues(Some(pv),Some(fv),Some(i),_,Some(n),nyr) =>
         val pi = periodRate(i, nyr)
-        val r = (pv * pi) / (1 -  1 / (1 + pi).pow(n))
+        val r = if (i != BigDecimal(0))
+          (pv * pi) / (1 -  1 / (1 + pi).pow(n))
+        else
+          pv / n
+
         calculateAmortization(data.copy(a = Some(r)))
         aField <~ text(r.setScale(
           2, BigDecimal.RoundingMode.UP).toString())
@@ -661,8 +655,9 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
     values match {
       case data@TVMValues(Some(pv),Some(fv),Some(i),Some(a),_,nyr) =>
         val pi = periodRate(i, nyr)
-        val r = -1 * (log((1 - (pv * pi / a)).doubleValue()) /
-          log((1 + pi).doubleValue()))
+        val r = if (i == BigDecimal(0)) (pv / a).doubleValue else
+          -1 * (log((1 - (pv * pi / a)).doubleValue()) /
+            log((1 + pi).doubleValue()))
         calculateAmortization(data.copy(n = Some(ceil(r).toInt)))
         nField <~ text(ceil(r).toInt.toString)
       case _ =>
@@ -700,6 +695,15 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
       Adapter.calculatedAmortization()
     case _ => getUi(toast(
       "Cannot amortize without principal, interest and payment") <~ fry)
+  }
+
+
+  override def onBackPressed(): Unit = {
+    if (viewPager.getCurrentItem == 0)
+      super.onBackPressed()
+    else
+      viewPager.setCurrentItem(0)
+
   }
 
   object AmortNAdapter extends BaseAdapter {
@@ -787,7 +791,7 @@ case class TextDrawable(text: String)(implicit c: AppContext) extends Drawable {
   textPaint.getTextBounds(text, 0, text.length, bounds)
 
   override def draw(canvas: Canvas) =
-    canvas.drawText(text, 0, bounds.height / 2, textPaint)
+      canvas.drawText(text, -bounds.width/2, bounds.height / 2, textPaint)
 
   override def getIntrinsicHeight = bounds.height
   override def getIntrinsicWidth = bounds.width
