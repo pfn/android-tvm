@@ -673,7 +673,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
                                      itotal: Double, ptotal: Double,
                                      acc: List[AmortRowData] = Nil):
                                      List[AmortRowData] = {
-    if (remaining > 0) {
+    if (remaining > 0.001) {
       val ipaid = remaining * rate
       val ppaid = math.min(a - ipaid, remaining)
       _calculateAmortization(
