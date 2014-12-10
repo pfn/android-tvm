@@ -6,6 +6,7 @@ import android.graphics._
 import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.support.v4.view.{ViewPager, PagerAdapter}
+import android.support.v7.app.ActionBarActivity
 import android.text.TextUtils.TruncateAt
 import android.text._
 import android.view.View.OnTouchListener
@@ -84,7 +85,7 @@ object MainActivity {
       v.setLayoutParams(lp)
   }
 }
-class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with IdGeneration {
+class MainActivity extends ActionBarActivity with Contexts[Activity] with AutoLogTag with IdGeneration {
   import MainActivity._
   import ViewGroup.LayoutParams._
 
@@ -238,9 +239,9 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
 
   val inputButtonTweaks = tweak { b: Button =>
     b.setTextAppearance(this, android.R.style.TextAppearance_Medium)
-    b.setTextColor(Color.WHITE)
   } + lp[TableRow](inputButtonSize, inputButtonSize) + FuncOn.click { v: View =>
     v.getTag match {
+      case null => Ui() // equals button
       case n: Integer => inputText <~ appendText(n.toString)
       case s: String => inputText <~ appendText(s)
     }
@@ -422,7 +423,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
       w[Button] <~ text(".") <~ hold(".") <~
         wire(decimalButton),
       w[Button] <~ text("0") <~ hold(0),
-      w[ImageButton] <~ image(android.R.drawable.ic_menu_send) <~
+      w[Button] <~ text("=") <~ tweak { tv: TextView => tv.setTextAppearance(this, android.R.style.TextAppearance_Medium) } <~
         lp[TableRow](inputButtonSize, inputButtonSize) <~ On.click {
           Ui(popupWindow map { p =>
             selectedField map { case (s) =>
@@ -442,7 +443,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
       }
     ) <~ lp[TableLayout](MATCH_PARENT, WRAP_CONTENT)
   ) <~ lp[FrameLayout](WRAP_CONTENT, WRAP_CONTENT) <~ Transformer {
-    case b: Button => b <~ inputButtonTweaks
+    case b: Button if "=" != b.getText => b <~ inputButtonTweaks
   }
 
   lazy val pagerLayout = w[HSViewPager] <~ tweak { v: ViewPager =>
@@ -508,6 +509,7 @@ class MainActivity extends Activity with Contexts[Activity] with AutoLogTag with
 
   override def onCreate(state: Bundle) {
     super.onCreate(state)
+    getSupportActionBar.setElevation(0)
     getWindow.setSoftInputMode(
       WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
     setContentView(getUi(pagerLayout))
